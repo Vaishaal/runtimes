@@ -22,7 +22,6 @@ unique_instance_name = 'pywren_builder'
 s3url = "s3://ericmjonas-public/condaruntime.python3.stripped.scipy-cvxpy-sklearn.mkl_avx2.tar.gz"
 
 
-
 def tags_to_dict(d):
     return {a['Key'] : a['Value'] for a in d}
 
@@ -42,13 +41,10 @@ env.roledefs.update(get_target_instance())
 
 @task
 def launch():
-
     ec2 = boto3.resource('ec2', region_name=region)
-
     instances = ec2.create_instances(ImageId=tgt_ami, MinCount=1, MaxCount=1, 
-                         KeyName='ec2-us-west-2', InstanceType='m4.large')
+                         KeyName='imagenet_exps', InstanceType='m4.large')
     inst = instances[0]
-
     inst.wait_until_running()
     inst.reload()
     inst.create_tags(
@@ -63,7 +59,7 @@ def launch():
         ]
     )
 
-@task        
+@task
 def ssh():
     local("ssh -A " + env.host_string)
 
@@ -79,15 +75,23 @@ def install_gist():
         with cd("gist"):
             run("git clone https://github.com/yuichiroTCY/lear-gist-python")
             with cd("lear-gist-python"):
-                run("/tmp/conda/condaruntime/bin/conda install -q -y -c menpo fftw=3.3.4")
+                run("/tmp/condaruntime/bin/conda install -q -y -c menpo fftw=3.3.4")
                 run("sh download-lear.sh")
                 run("sed -i '1s/^/#define M_PI 3.1415926535897\\n /' lear_gist-1.2/gist.c")
-                run("CFLAGS=-std=c99 /tmp/conda/condaruntime/bin/python setup.py build_ext -I /tmp/conda/condaruntime/include/ -L /tmp/conda/condaruntime/lib/")
-                run("CFLAGS=-std=c99 /tmp/conda/condaruntime/bin/python setup.py install")
-            
+                run("CFLAGS=-std=c99 /tmp/condaruntime/bin/python setup.py build_ext -I /tmp/condaruntime/condaruntime/include/ -L /tmp/condaruntime/condaruntime/lib/")
+                run("CFLAGS=-std=c99 /tmp/condaruntime/bin/python setup.py install")
+
+TF_URL="https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.0.1-cp36-cp36m-linux_x86_64.whl"
+
+@task
+def tf_setup(CONDA_RUNTIME_DIR):
+    run("pip install --ignore-installed --upgrade {0}".format(TF_URL))
+    run("conda install  -f  numpy")
+
 @task
 def shrink_conda(CONDA_RUNTIME_DIR):
     put("shrinkconda.py")
+    run("sudo pip install glob2")
     run("python shrinkconda.py {}".format(CONDA_RUNTIME_DIR))
 
 @task
@@ -146,8 +150,12 @@ def create_runtime(pythonver,
             run("conda install -q -y {}".format(conda_default_pkg_str))
             for chan, pkg in conda_pkgs_custom_channel:
                 run("conda install -q -y -c {} {}".format(chan, pkg))
+            print("PIP PKG", pip_pkg_str)
             run("pip install {}".format(pip_pkg_str))
             run("pip install --upgrade {}".format(pip_pkg_upgrade_str))
+            install_gist()
+            run("pip install --ignore-installed --upgrade {0}".format(TF_URL))
+            run("conda install  -f  numpy")
 
 def format_freeze_str(x):
     packages = x.splitlines()
@@ -170,7 +178,9 @@ def build_and_stage_runtime(runtime_name, runtime_config):
         pip_upgrade = runtime_config['pip_upgrade']
         execute(create_runtime, python_ver, conda_install,
                 pip_install, pip_upgrade)
-        execute(shrink_conda, CONDA_INSTALL_DIR)
+        #execute(shrink_conda, CONDA_INSTALL_DIR)
+
+
         freeze_str = execute(get_runtime_pip_freeze, CONDA_INSTALL_DIR)
         freeze_str_single = freeze_str.values()[0] # HACK 
 
